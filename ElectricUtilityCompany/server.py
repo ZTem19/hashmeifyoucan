@@ -11,8 +11,6 @@
 #   over insecure communication channel.
 
 import socket
-import math
-import binascii
 import struct
 import time
 import json
@@ -26,144 +24,63 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat,
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
+# h. Add freshness fields BEFORE signing/encrypting the message.
+# The timestamp and nonce must be authenticated along with the message.
+def add_freshness(message):
+    return dict(message, timestamp=time.time(), nonce=os.urandom(16).hex())
+
+
+def check_replay(message, seen_nonces):
+    # Call AFTER signature verification or authenticated AES decryption.
+    # Keep the same set for all received messages; clocks must agree within 60s.
+    # Do not clear it while old authenticated messages can still be accepted.
+    if not abs(time.time() - message["timestamp"]) <= 60:
+        raise ValueError("Message timestamp is outside the allowed window")
+    if message["nonce"] in seen_nonces:
+        raise ValueError("Replay detected")
+    seen_nonces.add(message["nonce"])
+
+
+# i. Convert byte values (keys, signatures, IVs, ciphertext) to Base64 strings.
+# Accepts a flat dictionary; text and numeric values stay unchanged.
+def send_json(sock, message):
+    json_dict = {
+        key: base64.b64encode(value).decode('utf-8')
+        if isinstance(value, bytes) else value
+        for key, value in message.items()
+    }
+    message_bytes = json.dumps(json_dict).encode('utf-8')
+    sock.sendall(struct.pack('!I', len(message_bytes)) + message_bytes)
+
+
+# j. TCP may split a message across multiple recv() calls.
+def receive_exact(sock, length):
+    data = b''
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise ConnectionError("Peer disconnected")
+        data += chunk
+    return data
+
+
+def receive_json(sock, byte_fields=()):
+    # Supply the binary field names, e.g. byte_fields=("server_public_key",).
+    # Parsing does not authenticate a message; verify/decrypt before using it.
+    length = struct.unpack('!I', receive_exact(sock, 4))[0]
+    message = json.loads(receive_exact(sock, length).decode('utf-8'))
+    if not isinstance(message, dict):
+        raise ValueError("Expected a JSON dictionary")
+    for key in byte_fields:
+        message[key] = base64.b64decode(message[key], validate=True)
+    return message
+
+
 # ===================================================================
 # Setup Phase: Using pre-defined Diffie-Hellman parameters for both
 #              the server and the client
 #              RFC 3526 , 2048-bit MODP Group
 # ===================================================================
-# ============================================================
-# Parts h, i, j: replay protection and JSON message transport
-# ============================================================
-
-MAX_MESSAGE_SIZE = 65536
-
-
-def create_payload(data):
-    """h: Add freshness information BEFORE signing/encrypting the payload."""
-    return {
-        "timestamp": time.time(),
-        "message_id": os.urandom(16).hex(),
-        "data": data
-    }
-
-
-class ReplayProtection:
-    """h: Reject stale/duplicate authenticated messages.
-
-    Keep one instance across all received messages. Assumes synchronized
-    clocks; this in-memory cache is lost on restart. Cross-restart protection
-    requires persistent state or an authenticated fresh session identifier.
-    """
-
-    def __init__(self, max_age=30, future_tolerance=5):
-        self.max_age = max_age
-        self.future_tolerance = future_tolerance
-        self.seen_ids = {}
-
-    def check(self, payload):
-        """Record an accepted ID or raise ValueError. Authenticate first."""
-        if not isinstance(payload, dict):
-            raise ValueError("Payload must be a dictionary")
-        timestamp = payload.get("timestamp")
-        message_id = payload.get("message_id")
-        if type(timestamp) not in (int, float):
-            raise ValueError("Invalid timestamp")
-        try:
-            finite = math.isfinite(timestamp)
-        except OverflowError:
-            finite = False
-        if not finite:
-            raise ValueError("Timestamp must be finite")
-        if (not isinstance(message_id, str) or len(message_id) != 32
-                or any(c not in "0123456789abcdef" for c in message_id)):
-            raise ValueError("Invalid message ID")
-        if "data" not in payload:
-            raise ValueError("Missing application data")
-        now = time.time()
-        if timestamp < now - self.max_age:
-            raise ValueError("Message has expired")
-        if timestamp > now + self.future_tolerance:
-            raise ValueError("Message timestamp is too far in the future")
-        self.seen_ids = {
-            old_id: expiry for old_id, expiry in self.seen_ids.items()
-            if expiry >= now
-        }
-        if message_id in self.seen_ids:
-            raise ValueError("Replay detected: duplicate message ID")
-        self.seen_ids[message_id] = timestamp + self.max_age
-
-
-def encode_base64(raw_bytes):
-    """i: Convert binary keys, signatures, IVs or ciphertext to JSON strings."""
-    return base64.b64encode(raw_bytes).decode("utf-8")
-
-
-def json_to_bytes(dictionary):
-    """i: Serialize once; sign and send these same bytes."""
-    return json.dumps(dictionary, separators=(",", ":"),
-                      allow_nan=False).encode("utf-8")
-
-
-def send_json(sock, dictionary):
-    """i: Send UTF-8 JSON preceded by its 4-byte network-order length."""
-    if not isinstance(dictionary, dict):
-        raise ValueError("Outgoing message must be a dictionary")
-    message_bytes = json_to_bytes(dictionary)
-    if not 0 < len(message_bytes) <= MAX_MESSAGE_SIZE:
-        raise ValueError("Outgoing message exceeds size limit")
-    sock.sendall(struct.pack("!I", len(message_bytes)) + message_bytes)
-
-
-def receive_exactly(sock, byte_count):
-    """j: Loop because TCP recv() can return only part of a message."""
-    received = bytearray()
-    while len(received) < byte_count:
-        chunk = sock.recv(byte_count - len(received))
-        if not chunk:
-            raise ConnectionError("Connection closed while receiving")
-        received.extend(chunk)
-    return bytes(received)
-
-
-def json_from_bytes(raw_bytes):
-    """j: Parse UTF-8 JSON and require an object/dictionary."""
-    try:
-        result = json.loads(raw_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, RecursionError) as error:
-        raise ValueError("Invalid JSON message") from error
-    if not isinstance(result, dict):
-        raise ValueError("JSON message must contain a dictionary")
-    return result
-
-
-def receive_json(sock):
-    """j: Read one complete frame. Close connection on framing errors."""
-    header = receive_exactly(sock, 4)
-    message_length = struct.unpack("!I", header)[0]
-    if not 0 < message_length <= MAX_MESSAGE_SIZE:
-        raise ValueError("Invalid incoming message length")
-    return json_from_bytes(receive_exactly(sock, message_length))
-
-
-def decode_base64(value):
-    """j: Validate and recover bytes for verification or decryption."""
-    if not isinstance(value, str):
-        raise ValueError("Base64 field must be a string")
-    try:
-        return base64.b64decode(value, validate=True)
-    except (binascii.Error, ValueError) as error:
-        raise ValueError("Invalid Base64 field") from error
-
-
-def require_fields(message, expected_type, fields):
-    """j: Check a received envelope before accessing its fields."""
-    if message.get("type") != expected_type:
-        raise ValueError("Unexpected message type")
-    for field in fields:
-        if field not in message:
-            raise ValueError(f"Missing field: {field}")
-
-
 known_g = 2     # Standard generator
 known_p = int(  # known prime
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
@@ -240,21 +157,7 @@ def run_server():
                 print(f"Connection accepted from {addr}")
                 break
 
-        # Parts a-g: establish RSA/DH keys here with your teammates.
-        # Keep this checker alive across all incoming meter responses.
-        replay_checker = ReplayProtection()
-
-        # Integration example for a received AES-GCM response:
-        # message = receive_json(connection)
-        # require_fields(message, "meter_response", ["iv", "ciphertext"])
-        # iv = decode_base64(message["iv"])
-        # ciphertext = decode_base64(message["ciphertext"])
-        # payload_bytes = decrypt_message(shared_key, iv, ciphertext)
-        # payload = json_from_bytes(payload_bytes)
-        # Validate payload["data"] fields, then:
-        # replay_checker.check(payload)
-        # Only now use the meter reading.
-        # decrypt_message is your teammate's authenticated-decryption function.
+        # Your code is here
 
         while True:
             # Display the commands
@@ -268,16 +171,7 @@ def run_server():
             choice = input("Select an option (1-4): ").strip()
 
             if choice == "1":                
-                # Parts h/i: prepare SEND DATA, then use your teammate's signer.
-                # payload_bytes = json_to_bytes(create_payload({"command": "SEND DATA"}))
-                # signature = sign_message(server_private_key, payload_bytes)
-                # send_json(connection, {
-                #     "type": "signed_command",
-                #     "payload": encode_base64(payload_bytes),
-                #     "signature": encode_base64(signature)
-                # })
-                # Then receive/authenticate/check the meter response as above.
-                # Uncomment after connecting your teammate's signing function.
+                # Your code is here
                 
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
