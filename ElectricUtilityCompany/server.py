@@ -75,6 +75,50 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 
     return derived_key
 
+
+# ============================================================================
+# This function encrypts a plaintext message using AES-256-GCM.
+#
+# Inputs:
+#     key: 32-byte (256-bit) AES key, derived from generate_diffie_hellman_secret_key
+#     plaintext: the message to encrypt, as bytes
+#     associated_data: optional bytes to authenticate but not encrypt
+#                       (e.g. a command type, so it can't be swapped undetected)
+#
+# Returns:
+#     (iv, ciphertext) tuple, both as bytes.
+#     ciphertext includes the GCM authentication tag appended at the end.
+# ============================================================================
+def aes_encrypt(key, plaintext, associated_data=None):
+    if len(key) != 32:
+       raise ValueError("AES-256 key must be 32 bytes")
+    iv = os.urandom(12)  # 12-byte IV, required for AES-GCM
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(iv, plaintext, associated_data)
+    return iv, ciphertext
+
+# ============================================================================
+# This function decrypts an AES-256-GCM ciphertext and verifies its
+#     integrity and authenticity.
+#
+# Inputs:
+#     key: 32-byte (256-bit) AES key, same key used for encryption
+#     iv: the 12-byte IV used during encryption
+#     ciphertext: the encrypted data (includes GCM tag)
+#     associated_data: must exactly match what was used during encryption
+#
+# Returns:
+#     The original plaintext as bytes.
+#     Raises cryptography.exceptions.InvalidTag if ciphertext or
+#     associated_data was tampered with.
+# ============================================================================
+def aes_decrypt(key, iv, ciphertext, associated_data=None):
+    if len(key) != 32:
+       raise ValueError("AES-256 key must be 32 bytes")
+    aesgcm = AESGCM(key)
+    plaintext = aesgcm.decrypt(iv, ciphertext, associated_data)
+    return plaintext
+
 # ================================================================
 # This is the main entry point of the server's operations
 #
