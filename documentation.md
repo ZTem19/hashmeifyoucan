@@ -54,3 +54,24 @@ shared secret to create the                                         shared secre
 4. Read meter data.
 ```
 
+## Messages
+Messages should be send as json data with the length prefixed to the entire payload as follows:
+<br>
+unencrypted:
+<br>
+```
+length as unsigned 32 bit integer
+{
+    data: bytes
+}
+```
+encrypted:
+```
+length as unsigned 32 bit integer
+{
+    data: bytes
+    signature: rsa_signature
+}
+```
+## RSA
+Sign then encrypt

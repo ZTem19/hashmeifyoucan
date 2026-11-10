@@ -16,6 +16,8 @@ import json
 import base64
 import time
 import os
+from time import sleep
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, dh
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -74,6 +76,31 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 
     return derived_key
 
+
+#### RSA SECTION ####
+rsa_pub_key: rsa.RSAPublicKey
+
+
+#### HELPER FUNCTIONS ####
+
+def rcv_json_unencrypted(connection: socket.socket):
+    """Receive a JSON object from the connection and return it as a dictionary.
+        This function will block until data arrives. It first reads the length of the JSON string, then reads the actual JSON string."""
+    
+    # Receive the length of the JSON string first
+    json_length_struct = connection.recv(4)
+    json_length = struct.unpack('!I', json_length_struct)[0]
+    
+    # Then receive the actual JSON string
+    json_data = connection.recv(json_length).decode()
+    
+    # Convert the JSON string back to a dictionary
+    data = json.loads(json_data)
+    
+    return data
+
+
+
 # =======================================================
 # This is the main entry point of the client's operations
 #
@@ -91,15 +118,34 @@ def run_client():
     print("Connected to server.")
 
     # Your Code is here
+    
+    # RSA CODE HERE
+    json_data = rcv_json_unencrypted(client_socket) 
+    rsa_pub_key = serialization.load_pem_public_key(json_data.get("rsa_public_key").encode('utf-8'))
+    if(rsa_pub_key is None):
+        print("Error: RSA public key not found in the received JSON data.")
+        client_socket.close()
+        return
+    
+    print(f"Received RSA public key from server: {rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')}")
+    
  
     while True:
         # Client is waiting to receive next message
         print("Client is waiting...")
 
         # Your Code is here
+        sleep(10)
+        
+            
+            
 
 
     client_socket.close()
 
 if __name__ == "__main__":
     run_client()
+
+
+
+#### RSA SECTION ####

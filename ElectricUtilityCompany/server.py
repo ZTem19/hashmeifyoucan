@@ -75,6 +75,43 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 
     return derived_key
 
+
+#### RSA SECTION ####
+rsa_priv_key: rsa.RSAPrivateKey
+rsa_pub_key: rsa.RSAPublicKey
+
+def rsa_sign(message: bytes) -> bytes:
+    """Sign a message using the server's RSA private key."""
+    signature = rsa_priv_key.sign(
+        message,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+    return signature
+
+#### HELPER FUNCTIONS ####
+
+def send_str_unencrypted(connection: socket.socket, message: str) -> None:
+    message_length = len(message)
+    connection.sendall(struct.pack('!I', message_length) + message.encode())
+    
+
+def send_bytes_unencrypted(connection: socket.socket, message: bytes) -> None:
+    message_length = len(message)
+    connection.sendall(struct.pack('!I', message_length) + message)
+    
+    
+def send_json_unencrypted(connection: socket.socket, data: dict) -> None:
+    # Convert the dictionary to a JSON string
+    json_data = json.dumps(data)
+    json_length = len(json_data)
+    connection.sendall(struct.pack('!I', json_length) + json_data.encode())
+
+
+
 # ================================================================
 # This is the main entry point of the server's operations
 #
@@ -106,6 +143,18 @@ def run_server():
                 break
 
         # Your code is here
+        
+        # RSA CODE HERE
+        # Generate RSA key pair for the server
+        rsa_priv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        rsa_pub_key = rsa_priv_key.public_key() 
+    
+        # Send public key to the client
+        pub_key_json = {
+            "rsa_public_key": rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')
+        }
+        send_json_unencrypted(connection, pub_key_json)
+        
 
         while True:
             # Display the commands
@@ -149,3 +198,5 @@ def run_server():
 
 if __name__ == "__main__":
     run_server()
+
+
