@@ -75,6 +75,53 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 
     return derived_key
 
+
+#### RSA SECTION ####
+rsa_priv_key: rsa.RSAPrivateKey
+rsa_pub_key: rsa.RSAPublicKey
+    
+def send_rsa_pub_key(connection: socket.socket, data: dict) -> None:
+    # Convert the dictionary to a JSON string
+    json_data = json.dumps(data)
+    json_length = len(json_data)
+    connection.sendall(struct.pack('!I', json_length) + json_data.encode())
+
+def send_json_signed(connection: socket.socket, json_data: dict) -> None:
+    # Convert the dictionary to a JSON string
+    payload_bytes = json.dumps(json_data, sort_keys=True).encode('utf-8')
+    
+    # Sign the json payload
+    signature = rsa_priv_key.sign(
+        payload_bytes, 
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+            ), 
+        hashes.SHA256()
+    )   
+    
+    b64_signature = base64.b64encode(signature).decode('utf-8')
+    
+    message = {
+        "payload": payload_bytes.decode('utf-8'),
+        "signature": b64_signature
+    }
+    
+    # Send the length of the JSON string, the JSON string, and the signature
+    data = json.dumps(message).encode('utf-8')
+    connection.sendall(struct.pack('!I', len(data)) + data)
+
+#### HELPER FUNCTIONS ####
+
+def send_command(connection: socket.socket, command: str) -> None:
+    """Send a command to the client. The command is a string."""
+    payload = {
+        "command": command,
+        "timestamp": time.time()
+    }
+    send_json_signed(connection, payload)
+
+
 # ================================================================
 # This is the main entry point of the server's operations
 #
@@ -106,6 +153,20 @@ def run_server():
                 break
 
         # Your code is here
+        
+        # RSA CODE HERE
+        # Generate RSA key pair for the server
+        global rsa_priv_key
+        global rsa_pub_key
+        rsa_priv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        rsa_pub_key = rsa_priv_key.public_key() 
+    
+        # Send public key to the client
+        pub_key_json = {
+            "rsa_public_key": rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')
+        }
+        send_rsa_pub_key(connection, pub_key_json)
+        
 
         while True:
             # Display the commands
@@ -120,17 +181,17 @@ def run_server():
 
             if choice == "1":                
                 # Your code is here
-                
+                send_command(connection, "GET_READING")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "2":
                 # Your code is here
-
+                send_command(connection, "SHUTDOWN")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "3":
                 # Your code is here
-
+                send_command(connection, "START_SERVICE")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "4":
@@ -149,3 +210,5 @@ def run_server():
 
 if __name__ == "__main__":
     run_server()
+
+
