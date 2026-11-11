@@ -172,7 +172,8 @@ def run_client():
     
     # RSA CODE HERE
     json_data = rcv_json(client_socket) 
-    rsa_pub_key = serialization.load_pem_public_key(json_data.get("rsa_public_key").encode('utf-8'))
+    global rsa_pub_key
+    rsa_pub_key = serialization.load_pem_public_key(json_data.get("rsa_public_key").encode('utf-8')) # type: ignore
     if(rsa_pub_key is None):
         print("Error: RSA public key not found in the received JSON data.")
         client_socket.close()
@@ -184,19 +185,10 @@ def run_client():
  
     while True:
         # Client is waiting to receive next message
-        print("Client is waiting...")
+        # print("Client is waiting...")
         json_data = rcv_json(client_socket)
         
         print(f"Received JSON data: {json_data}")
-        
-
-        # Your Code is here
-        sleep(10)
-
-        
-            
-            
-
 
     client_socket.close()
 
