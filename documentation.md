@@ -69,7 +69,10 @@ encrypted:
 ```
 length as unsigned 32 bit integer
 {
-    data: bytes
+    data:
+        command:
+        timestamp:
+        message:
     signature: rsa_signature
 }
 ```

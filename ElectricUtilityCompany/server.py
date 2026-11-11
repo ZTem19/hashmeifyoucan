@@ -79,37 +79,47 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 #### RSA SECTION ####
 rsa_priv_key: rsa.RSAPrivateKey
 rsa_pub_key: rsa.RSAPublicKey
-
-def rsa_sign(message: bytes) -> bytes:
-    """Sign a message using the server's RSA private key."""
-    signature = rsa_priv_key.sign(
-        message,
-        padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH
-        ),
-        hashes.SHA256()
-    )
-    return signature
-
-#### HELPER FUNCTIONS ####
-
-def send_str_unencrypted(connection: socket.socket, message: str) -> None:
-    message_length = len(message)
-    connection.sendall(struct.pack('!I', message_length) + message.encode())
     
-
-def send_bytes_unencrypted(connection: socket.socket, message: bytes) -> None:
-    message_length = len(message)
-    connection.sendall(struct.pack('!I', message_length) + message)
-    
-    
-def send_json_unencrypted(connection: socket.socket, data: dict) -> None:
+def send_rsa_pub_key(connection: socket.socket, data: dict) -> None:
     # Convert the dictionary to a JSON string
     json_data = json.dumps(data)
     json_length = len(json_data)
     connection.sendall(struct.pack('!I', json_length) + json_data.encode())
 
+def send_json_signed(connection: socket.socket, json_data: dict) -> None:
+    # Convert the dictionary to a JSON string
+    payload_bytes = json.dumps(json_data, sort_keys=True).encode('utf-8')
+    
+    # Sign the json payload
+    signature = rsa_priv_key.sign(
+        payload_bytes, 
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+            ), 
+        hashes.SHA256()
+    )   
+    
+    b64_signature = base64.b64encode(signature).decode('utf-8')
+    
+    message = {
+        "payload": payload_bytes.decode('utf-8'),
+        "signature": b64_signature
+    }
+    
+    # Send the length of the JSON string, the JSON string, and the signature
+    data = json.dumps(message).encode('utf-8')
+    connection.sendall(struct.pack('!I', len(data)) + data)
+
+#### HELPER FUNCTIONS ####
+
+def send_command(connection: socket.socket, command: str) -> None:
+    """Send a command to the client. The command is a string."""
+    payload = {
+        "command": command,
+        "timestamp": time.time()
+    }
+    send_json_signed(connection, payload)
 
 
 # ================================================================
@@ -146,6 +156,8 @@ def run_server():
         
         # RSA CODE HERE
         # Generate RSA key pair for the server
+        global rsa_priv_key
+        global rsa_pub_key
         rsa_priv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         rsa_pub_key = rsa_priv_key.public_key() 
     
@@ -153,7 +165,7 @@ def run_server():
         pub_key_json = {
             "rsa_public_key": rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')
         }
-        send_json_unencrypted(connection, pub_key_json)
+        send_rsa_pub_key(connection, pub_key_json)
         
 
         while True:
@@ -169,17 +181,17 @@ def run_server():
 
             if choice == "1":                
                 # Your code is here
-                
+                send_command(connection, "GET_READING")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "2":
                 # Your code is here
-
+                send_command(connection, "SHUTDOWN")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "3":
                 # Your code is here
-
+                send_command(connection, "START_SERVICE")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "4":
