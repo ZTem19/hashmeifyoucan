@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_der_public_key
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
+ 
 
 # ===================================================================
 # Setup Phase: Using pre-defined Diffie-Hellman parameters for both
