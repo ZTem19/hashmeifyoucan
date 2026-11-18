@@ -127,6 +127,96 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 
     return derived_key
 
+
+# ============================================================================
+# This function encrypts a plaintext message using AES-256-GCM.
+#
+# Inputs:
+#     key: 32-byte (256-bit) AES key, derived from generate_diffie_hellman_secret_key
+#     plaintext: the message to encrypt, as bytes
+#     associated_data: optional bytes to authenticate but not encrypt
+#                       (e.g. a command type, so it can't be swapped undetected)
+#
+# Returns:
+#     (iv, ciphertext) tuple, both as bytes.
+#     ciphertext includes the GCM authentication tag appended at the end.
+# ============================================================================
+def aes_encrypt(key, plaintext, associated_data=None):
+    if len(key) != 32:
+       raise ValueError("AES-256 key must be 32 bytes")
+    iv = os.urandom(12)  # 12-byte IV, required for AES-GCM
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(iv, plaintext, associated_data)
+    return iv, ciphertext
+
+# ============================================================================
+# This function decrypts an AES-256-GCM ciphertext and verifies its
+#     integrity and authenticity.
+#
+# Inputs:
+#     key: 32-byte (256-bit) AES key, same key used for encryption
+#     iv: the 12-byte IV used during encryption
+#     ciphertext: the encrypted data (includes GCM tag)
+#     associated_data: must exactly match what was used during encryption
+#
+# Returns:
+#     The original plaintext as bytes.
+#     Raises cryptography.exceptions.InvalidTag if ciphertext or
+#     associated_data was tampered with.
+# ============================================================================
+def aes_decrypt(key, iv, ciphertext, associated_data=None):
+    if len(key) != 32:
+       raise ValueError("AES-256 key must be 32 bytes")
+    aesgcm = AESGCM(key)
+    plaintext = aesgcm.decrypt(iv, ciphertext, associated_data)
+    return plaintext
+  
+#### RSA SECTION ####
+rsa_priv_key: rsa.RSAPrivateKey
+rsa_pub_key: rsa.RSAPublicKey
+    
+def send_rsa_pub_key(connection: socket.socket, data: dict) -> None:
+    # Convert the dictionary to a JSON string
+    json_data = json.dumps(data)
+    json_length = len(json_data)
+    connection.sendall(struct.pack('!I', json_length) + json_data.encode())
+
+def send_json_signed(connection: socket.socket, json_data: dict) -> None:
+    # Convert the dictionary to a JSON string
+    payload_bytes = json.dumps(json_data, sort_keys=True).encode('utf-8')
+    
+    # Sign the json payload
+    signature = rsa_priv_key.sign(
+        payload_bytes, 
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+            ), 
+        hashes.SHA256()
+    )   
+    
+    b64_signature = base64.b64encode(signature).decode('utf-8')
+    
+    message = {
+        "payload": payload_bytes.decode('utf-8'),
+        "signature": b64_signature
+    }
+    
+    # Send the length of the JSON string, the JSON string, and the signature
+    data = json.dumps(message).encode('utf-8')
+    connection.sendall(struct.pack('!I', len(data)) + data)
+
+#### HELPER FUNCTIONS ####
+
+def send_command(connection: socket.socket, command: str) -> None:
+    """Send a command to the client. The command is a string."""
+    payload = {
+        "command": command,
+        "timestamp": time.time()
+    }
+    send_json_signed(connection, payload)
+
+
 # ================================================================
 # This is the main entry point of the server's operations
 #
@@ -158,6 +248,20 @@ def run_server():
                 break
 
         # Your code is here
+        
+        # RSA CODE HERE
+        # Generate RSA key pair for the server
+        global rsa_priv_key
+        global rsa_pub_key
+        rsa_priv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        rsa_pub_key = rsa_priv_key.public_key() 
+    
+        # Send public key to the client
+        pub_key_json = {
+            "rsa_public_key": rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')
+        }
+        send_rsa_pub_key(connection, pub_key_json)
+        
 
         while True:
             # Display the commands
@@ -172,17 +276,17 @@ def run_server():
 
             if choice == "1":                
                 # Your code is here
-                
+                send_command(connection, "GET_READING")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "2":
                 # Your code is here
-
+                send_command(connection, "SHUTDOWN")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "3":
                 # Your code is here
-
+                send_command(connection, "START_SERVICE")
                 # I added the following line to avoid errors in this starter code. You can remove it.
                 continue
             elif choice == "4":
