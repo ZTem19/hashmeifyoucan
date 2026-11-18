@@ -26,6 +26,58 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
+# h. Add freshness fields BEFORE signing/encrypting the message.
+# The timestamp and nonce must be authenticated along with the message.
+def add_freshness(message):
+    return dict(message, timestamp=time.time(), nonce=os.urandom(16).hex())
+
+
+def check_replay(message, seen_nonces):
+    # Call AFTER signature verification or authenticated AES decryption.
+    # Keep the same set for all received messages; clocks must agree within 60s.
+    # Do not clear it while old authenticated messages can still be accepted.
+    if not abs(time.time() - message["timestamp"]) <= 60:
+        raise ValueError("Message timestamp is outside the allowed window")
+    if message["nonce"] in seen_nonces:
+        raise ValueError("Replay detected")
+    seen_nonces.add(message["nonce"])
+
+
+# i. Convert byte values (keys, signatures, IVs, ciphertext) to Base64 strings.
+# Accepts a flat dictionary; text and numeric values stay unchanged.
+def send_json(sock, message):
+    json_dict = {
+        key: base64.b64encode(value).decode('utf-8')
+        if isinstance(value, bytes) else value
+        for key, value in message.items()
+    }
+    message_bytes = json.dumps(json_dict).encode('utf-8')
+    sock.sendall(struct.pack('!I', len(message_bytes)) + message_bytes)
+
+
+# j. TCP may split a message across multiple recv() calls.
+def receive_exact(sock, length):
+    data = b''
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise ConnectionError("Peer disconnected")
+        data += chunk
+    return data
+
+
+def receive_json(sock, byte_fields=()):
+    # Supply the binary field names, e.g. byte_fields=("server_public_key",).
+    # Parsing does not authenticate a message; verify/decrypt before using it.
+    length = struct.unpack('!I', receive_exact(sock, 4))[0]
+    message = json.loads(receive_exact(sock, length).decode('utf-8'))
+    if not isinstance(message, dict):
+        raise ValueError("Expected a JSON dictionary")
+    for key in byte_fields:
+        message[key] = base64.b64decode(message[key], validate=True)
+    return message
+
+
 # ===================================================================
 # Setup Phase: Using pre-defined Diffie-Hellman parameters for both
 #              the server and the client
@@ -194,7 +246,3 @@ def run_client():
 
 if __name__ == "__main__":
     run_client()
-
-
-
-#### RSA SECTION ####
