@@ -167,6 +167,36 @@ def run_server():
         }
         send_rsa_pub_key(connection, pub_key_json)
         
+        # ==========================================
+        # DIFFIE-HELLMAN KEY EXCHANGE (SERVER SIDE)
+        # ==========================================
+
+        # Initialize DH parameters using pre-defined known_p and known_g
+        parameters = dh.DHParameterNumbers(known_p, known_g).parameters()
+
+        #Generate server ephemeral private and public key pair
+        server_dh_priv = parameters.generate_ephermal_private_key()
+        server_dh_pub = server_dh_priv.public_key()
+
+        #Serialize server DH public key to DER and base64 encode
+        server_dh_pub_der = server_dh_pub.public_bytes(
+            encoding=Encoding.DER,
+            format=PublicFormat.SubjectPublicKeyInfo
+        )
+        server_dh_pub_b64 = base64.b64encode(server_dh_pub_der).decode('utf-8')
+
+        #Send server DH public key to client (unprotected)
+        dh_payload = {"dh_public_key": server_dh_pub_b64}
+        send_rsa_pub_key(connection, dh_payload)
+
+        #Receive client DH public key response
+        client_dh_response = rcv_json(connection)
+        client_dh_pub_b64 = client_dh_response.get("dh_public_key")
+        client_dh_pub_der = base64.b64decode(client_dh_pub_b64)
+
+        #Compute shared secret and derive the 32-byte AES key using HKDF
+        server_aes_key = generate_diffie_hellman_secret_key(server_dh_priv, client_dh_pub_der)
+        print("Server successfully established DH shared secret and derived AES key.")
 
         while True:
             # Display the commands

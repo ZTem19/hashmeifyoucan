@@ -183,6 +183,38 @@ def run_client():
     rsa_mode = True
     print(f"Received RSA public key from server: {rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')}")
     
+    # ==========================================
+    # DIFFIE-HELLMAN KEY EXCHANGE (CLIENT SIDE)
+    # ==========================================
+
+    # Initialize DH parameters using pre-defined known_p and known_g
+    parameters = dh.DHParameterNumbers(known_p, known_g).parameters()
+
+    # Generate client ephemeral private and public key pair
+    client_dh_priv = parameters.generate_ephermal_private_key()
+    client_dh_pub = client_dh_priv.public_key()
+
+    # Receive server's DH public key
+    server_dh_response = rcv_json(client_socket)
+    server_dh_pub_b64 = server_dh_response.get("dh_public_key")
+    server_dh_pub_der = base64.b64decode(server_dh_pub_b64)
+
+    # Serialize client DH public key to DER (SubjectPublicKeyInfo) and base64 encode
+    client_dh_pub_der_bytes = client_dh_pub.public_bytes(
+        encoding=Encoding.DER,
+        format=PublicFormat.SubjectPublicKeyInfo
+    )
+    client_dh_pub_b64 = base64.b64encode(client_dh_pub_der_bytes).decode('utf-8')
+
+    # Send client's DH public key back to the server
+    client_dh_msg = {"dh_public_key": client_dh_pub_b64}
+    json_data_str = json.dumps(client_dh_msg)
+    client_socket.sendall(struct.pack('!I', len(json_data_str)) + json_data_str.encode('utf-8'))
+
+    # Compute shared secret and derive the 32-byte AES key using HKDF
+    client_aes_key = generate_diffie_hellman_secret_key(client_dh_priv, server_dh_pub_der)
+    print("Client successfully established DH shared secret and derived AES key.")
+
  
     while True:
         # Client is waiting to receive next message
