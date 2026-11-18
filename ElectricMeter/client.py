@@ -243,7 +243,7 @@ def run_client():
     parameters = dh.DHParameterNumbers(known_p, known_g).parameters()
 
     # Generate client ephemeral private and public key pair
-    client_dh_priv = parameters.generate_ephermal_private_key()
+    client_dh_priv = parameters.generate_private_key()
     client_dh_pub = client_dh_priv.public_key()
 
     # Receive server's DH public key

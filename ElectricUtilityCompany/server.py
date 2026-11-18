@@ -270,7 +270,7 @@ def run_server():
         parameters = dh.DHParameterNumbers(known_p, known_g).parameters()
 
         #Generate server ephemeral private and public key pair
-        server_dh_priv = parameters.generate_ephermal_private_key()
+        server_dh_priv = parameters.generate_private_key()
         server_dh_pub = server_dh_priv.public_key()
 
         #Serialize server DH public key to DER and base64 encode
