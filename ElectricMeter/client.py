@@ -16,6 +16,8 @@ import json
 import base64
 import time
 import os
+from time import sleep
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, dh
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -74,6 +76,82 @@ def generate_diffie_hellman_secret_key(private_key, peer_raw_dh_public_key):
 
     return derived_key
 
+
+#### RSA SECTION ####
+rsa_pub_key: rsa.RSAPublicKey
+
+# global variable to indicate whether RSA mode is enabled or not
+# if on will ignore commands with false signature, turned on automatically when the client receives the server's public key
+rsa_mode: bool = False
+
+
+
+
+#### HELPER FUNCTIONS ####
+
+def rcv_json(connection: socket.socket):
+    """Receive a JSON object from the connection and return it as a dictionary.
+        This function will block until data arrives. It first reads the length of the JSON string, then reads the actual JSON string."""
+    
+    # Receive the length of the JSON string first
+    json_length_struct = connection.recv(4)
+    json_length = struct.unpack('!I', json_length_struct)[0]
+    
+    # Then receive the actual JSON string
+    json_data = connection.recv(json_length).decode()
+    
+    # Convert the JSON string back to a dictionary
+    data = json.loads(json_data)
+    
+    return data
+
+def rcv_json_signed(connection: socket.socket) -> dict | None:
+    """Receive a signed JSON object from the connection and return it as a dictionary.
+        This function will block until data arrives. It first reads the length of the JSON string, then reads the actual JSON string.
+        It verifies the signature and returns the dictionary if the signature is valid, otherwise it returns None."""
+    
+    # Receive the length of the JSON string first
+    json_length_struct = connection.recv(4)
+    json_length = struct.unpack('!I', json_length_struct)[0]
+    
+    # Then receive the actual JSON string
+    json_data = connection.recv(json_length).decode('utf-8')
+    
+    # Convert the JSON string back to a dictionary
+    data = json.loads(json_data)
+    
+    payload_bytes = data.get("payload").encode('utf-8')
+    b64_signature = data.get("signature")
+    signature = base64.b64decode(b64_signature)
+
+    if(verify_signature(payload_bytes, signature)):
+        print("Valid signature detected. Processing the message.")
+        payload = json.loads(payload_bytes.decode('utf-8'))
+        return payload
+    else:
+        print("Invalid signature detected. Ignoring the message.")
+        return None 
+
+
+def verify_signature(payload, signature) -> bool:
+    try:
+        rsa_pub_key.verify(
+            signature,
+            payload,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+        
+    except InvalidSignature:
+        print("Invalid signature detected.")
+        return False
+    
+    
+    
 # =======================================================
 # This is the main entry point of the client's operations
 #
@@ -91,15 +169,32 @@ def run_client():
     print("Connected to server.")
 
     # Your Code is here
+    
+    # RSA CODE HERE
+    json_data = rcv_json(client_socket) 
+    global rsa_pub_key
+    rsa_pub_key = serialization.load_pem_public_key(json_data.get("rsa_public_key").encode('utf-8')) # type: ignore
+    if(rsa_pub_key is None):
+        print("Error: RSA public key not found in the received JSON data.")
+        client_socket.close()
+        return
+    
+    rsa_mode = True
+    print(f"Received RSA public key from server: {rsa_pub_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode('utf-8')}")
+    
  
     while True:
         # Client is waiting to receive next message
-        print("Client is waiting...")
-
-        # Your Code is here
-
+        # print("Client is waiting...")
+        json_data = rcv_json(client_socket)
+        
+        print(f"Received JSON data: {json_data}")
 
     client_socket.close()
 
 if __name__ == "__main__":
     run_client()
+
+
+
+#### RSA SECTION ####
