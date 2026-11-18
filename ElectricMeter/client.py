@@ -10,7 +10,6 @@
 # Primitives -> Serialization for creating raw bytes from objects. These raw bytes can be transmitted
 #   over insecure communication channel.
 
-
 import socket
 import struct
 import json
@@ -136,8 +135,6 @@ rsa_pub_key: rsa.RSAPublicKey
 # global variable to indicate whether RSA mode is enabled or not
 # if on will ignore commands with false signature, turned on automatically when the client receives the server's public key
 rsa_mode: bool = False
-
-
 
 
 #### HELPER FUNCTIONS ####
